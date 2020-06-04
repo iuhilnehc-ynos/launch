@@ -358,7 +358,7 @@ class ExecuteProcess(Action):
                 if respawn_delay < 0:
                     raise ValueError(
                         'Attribute respawn_delay of Entity node expected to be '
-                        "a non-negative value but got '{}'".format(respawn_delay)
+                        'a non-negative value but got `{}`'.format(respawn_delay)
                     )
                 kwargs['respawn_delay'] = respawn_delay
 
@@ -735,23 +735,27 @@ class ExecuteProcess(Action):
             self.__logger.error("process has died [pid {}, exit code {}, cmd '{}'].".format(
                 pid, returncode, ' '.join(cmd)
             ))
-
-        if returncode != 0 and self.__respawn and not context.is_shutdown:
-            try:
-                await asyncio.wait_for(
-                    self.__shutdown_future,
-                    timeout=self.__respawn_delay,
-                    loop=context.asyncio_loop
-                )
-            except asyncio.exceptions.TimeoutError:
-                self.__shutdown_future = create_future(context.asyncio_loop)
-                context.asyncio_loop.create_task(self.__execute_process(context))
-                return
-            except Exception:
-                self.__logger.error(
-                    'exception occurred while executing asyncio.wait_for:\n'
-                    '{}'.format(traceback.format_exc())
-                )
+            # respawn the process that abnormally died
+            if not context.is_shutdown and self.__respawn:
+                respawn_flag = False
+                if self.__respawn_delay > 0:
+                    try:
+                        respawn_flag = await asyncio.wait_for(
+                            self.__shutdown_future,
+                            timeout=self.__respawn_delay,
+                            loop=context.asyncio_loop
+                        )
+                    except asyncio.exceptions.TimeoutError:
+                        respawn_flag = True
+                        self.__shutdown_future = create_future(context.asyncio_loop)
+                    except Exception:
+                        self.__logger.error(
+                            'exception occurred while executing asyncio.wait_for:\n'
+                            '{}'.format(traceback.format_exc())
+                        )
+                if self.__respawn_delay == 0 or respawn_flag:
+                    context.asyncio_loop.create_task(self.__execute_process(context))
+                    return
 
         await context.emit_event(ProcessExited(returncode=returncode, **process_event_args))
         self.__cleanup()
